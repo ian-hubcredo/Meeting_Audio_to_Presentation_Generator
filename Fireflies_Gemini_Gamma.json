@@ -1,0 +1,243 @@
+{
+  "name": "Fireflies → Gemini → Gamma",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nconst meetingContent = `# ${data.title || 'Meeting Notes'}\n\n## Meeting Details\n- Date: ${data.date || new Date().toISOString().split('T')[0]}\n- Duration: ${data.duration ? Math.round(data.duration / 60) + ' minutes' : 'N/A'}\n- Participants: ${data.participants?.map(p => p.name).join(', ') || 'Not specified'}\n\n## Summary\n${data.summary?.overview || data.summary?.short_summary || 'No summary available'}\n\n## Key Topics\n${data.topics?.map(t => `- ${t.topic}`).join('\\n') || 'None'}\n\n## Action Items\n${data.action_items?.map(item => `- ${item.assignee || 'Unassigned'}: ${item.text}`).join('\\n') || 'None'}\n\n## Transcript Highlights\n${data.sentences?.slice(0, 50).map(s => `**${s.speaker_name}**: ${s.text}`).join('\\n\\n') || 'No transcript available'}`;\n\nreturn {\n  json: {\n    inputText: meetingContent\n  }\n};"
+      },
+      "id": "0b7c129b-12ff-4913-a292-f06e836f7a8b",
+      "name": "Structure Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2704,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://public-api.gamma.app/v1.0/generations",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"inputText\": {{ $json.inputText }},\n  \"textMode\": \"preserve\",\n  \"format\": \"presentation\",\n  \"themeName\": \"Oasis\",\n  \"numberOfCards\": 10,\n  \"exportAs\": \"pptx\"\n}",
+        "options": {}
+      },
+      "id": "2ac5003b-50f0-4e45-a3d9-69df13b36ecf",
+      "name": "Gamma Create",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2496,
+        208
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "<REDACTED_CREDENTIAL_ID>", "name": "<REDACTED_CREDENTIAL_NAME>"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return {\n  json: {\n    generationId: $input.first().json.generationId || $input.first().json.id,\n    retryCount: 0\n  }\n};"
+      },
+      "id": "05da9fa6-97be-41ec-b705-561825038fc2",
+      "name": "Extract ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2272,
+        208
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "7039a06e-100f-4502-ae90-023d72209695",
+      "name": "Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -2064,
+        208
+      ],
+      "webhookId": "<REDACTED_WEBHOOK_ID>"
+    },
+    {
+      "parameters": {
+        "url": "=https://public-api.gamma.app/v1.0/generations/{{ $json.generationId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "b1365975-e1bb-4510-a044-842b28b1c2d6",
+      "name": "Check Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1856,
+        208
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "<REDACTED_CREDENTIAL_ID>", "name": "<REDACTED_CREDENTIAL_NAME>"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst retryCount = ($node['Wait'].json.retryCount || 0) + 1;\n\nif (response.status === 'completed') {\n  return {\n    json: {\n      status: 'completed',\n      gammaUrl: response.gammaUrl,\n      exportUrl: response.exportUrl || response.pptxUrl,\n      generationId: response.generationId\n    }\n  };\n} else if (retryCount >= 20) {\n  throw new Error('Gamma generation timeout after 100 seconds');\n} else {\n  return {\n    json: {\n      status: 'processing',\n      generationId: response.generationId,\n      retryCount: retryCount\n    }\n  };\n}"
+      },
+      "id": "8af3a7d2-d15b-4880-8041-6918aca5fb8c",
+      "name": "Check Complete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1696,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.fireflies.ai/graphql",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer <FIREFLIES_API_KEY>"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"query\": \"mutation($input: AudioUploadInput) { uploadAudio(input: $input) { success title message } }\", \"variables\": {\"input\": {\"url\": \"{{$json.audioUrl}}\", \"title\": \"{{$json.meetingTitle}}\", \"webhookUrl\": \"{{$node['Webhook'].json['webhookUrl']}}\"}}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -2928,
+        208
+      ],
+      "id": "86d481c4-8c45-4ab0-9c52-ae81b9f9f89e",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "b6a66cec-5468-4b9e-85c3-5189a07f584f",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -3120,
+        208
+      ],
+      "id": "6f3cb4c9-ace4-4e6b-8d85-898b1e64cd56",
+      "name": "Webhook",
+      "webhookId": "<REDACTED_WEBHOOK_ID>"
+    }
+  ],
+  "connections": {
+    "Gamma Create": {
+      "main": [
+        [
+          {
+            "node": "Extract ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract ID": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Check Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Status": {
+      "main": [
+        [
+          {
+            "node": "Check Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Complete": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structure Data": {
+      "main": [
+        [
+          {
+            "node": "Gamma Create",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Structure Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "triggerCount": 0,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
